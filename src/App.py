@@ -11,7 +11,7 @@ st.set_page_config(layout="wide")
 
 @st.cache_resource
 def get_profile_report(tbl):
-    return ProfileReport(tbl, orange_mode=True, explorative=True)
+    return ProfileReport(tbl, orange_mode=True, minimal=True, explorative=True)
 
 
 @st.cache_resource
