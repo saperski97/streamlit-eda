@@ -52,7 +52,7 @@ with st.sidebar:
                 == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             ):
                 tbl = pd.read_excel(file)
-            conn.sql(f"create or replace table '{file.name}' as select * from '{tbl}'")
+            conn.sql(f"create or replace table '{file.name}' as select * from tbl")
 
     with st.container(border=True):
         url = st.text_input("Get file from url")
