@@ -18,15 +18,17 @@ def get_profile_report(tbl):
 def get_streamlit_renderer(tbl):
     return StreamlitRenderer(tbl, dark="light")
 
-@st.cache_resource
+
 def get_db_connection():
-    conn = duckdb.connect()
-    conn.install_extension("spatial")
-    conn.load_extension("spatial")
-    return conn
+    if "conn" not in st.session_state:
+        conn = duckdb.connect()
+        conn.install_extension("spatial")
+        conn.load_extension("spatial")
+        st.session_state["conn"] = conn
+    return st.session_state["conn"]
 
 
-st.set_page_config(page_title="streamlit-eda", page_icon=":bar_chart:",layout="wide")
+st.set_page_config(page_title="streamlit-eda", page_icon=":bar_chart:", layout="wide")
 
 
 conn = get_db_connection()
@@ -42,29 +44,38 @@ with st.sidebar:
 
         for file in files:
             if file.type == "application/octet-stream":
-                conn.read_parquet(file).to_table(file.name)
+                tbl = pd.read_parquet(file)
             elif file.type == "text/csv":
-                conn.read_csv(file).to_table(file.name)
+                tbl = pd.read_csv(file)
             elif (
                 file.type
                 == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             ):
-                conn.sql(f"create or replace table '{file.name}' as select * from st_read('{file}')")
+                tbl = pd.read_excel(file)
+            conn.sql(f"create or replace table '{file.name}' as select * from '{tbl}'")
 
     with st.container(border=True):
         url = st.text_input("Get file from url")
         if st.button("Download file"):
             response = requests.get(url)
             if response.status_code == 200:
-                file_name = re.findall("filename=\"(.+)\"", response.headers["content-disposition"])[0]
-                conn.sql(f"create or replace table '{file_name}' as select * from '{url}'")
-
+                if "content-disposition" in response.headers.keys():
+                    file_name = re.findall(
+                        'filename="(.+)"', response.headers["content-disposition"]
+                    )[0]
+                else:
+                    file_name = re.findall("(\w+)(\.\w+)+(?!.*(\w+)(\.\w+)+)", url)[0][
+                        0
+                    ]
+                conn.sql(
+                    f"create or replace table '{file_name}' as select * from '{url}'"
+                )
 
     with st.container(border=True):
         cur.execute("show all tables")
         recs = cur.fetchall()
         table_lst = [rec[2] for rec in recs]
-            
+
         select_table = st.selectbox("Select Table", table_lst)
 
     with st.expander("About"):
