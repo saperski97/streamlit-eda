@@ -28,7 +28,23 @@ def get_db_connection():
     return st.session_state["conn"]
 
 
-st.set_page_config(page_title="streamlit-eda", page_icon=":bar_chart:", layout="wide")
+about = """
+            This application is a powerful tool for anyone who needs to perform
+            exploratory data analysis and manipulate data using SQL.\n
+            __Upload File__: The application allows users to upload files in specified format.
+            The uploaded data is then loaded into a pandas DataFrame for further processing.\n
+            __Get File from URL__: Users may load data into application by providing URL address.\n
+            __Select Table__: Users can select a table from the uploaded files for further operations.\n
+            __Visual Exploration__: Application provides a visual exploration interface using the pygwalker library.
+            This allows users to interactively explore their data.\n
+            __SQL Workbench__: The application provides an SQL workbench where users can write and execute
+            SQL queries on the selected table. The results of the queries are displayed in a DataFrame.\n
+            __Data Profiling__: The application generates a data profiling report using the ydata_profiling library.
+            This report provides comprehensive insights into the selected data.\n
+            """
+
+
+st.set_page_config(page_title="EDA workbench", page_icon=":bar_chart:", layout="wide")
 
 
 conn = get_db_connection()
@@ -52,52 +68,45 @@ with st.sidebar:
                 == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             ):
                 tbl = pd.read_excel(file)
-            conn.sql(f"create or replace table '{file.name}' as select * from tbl")
+            conn.sql(f"create table if not exists '{file.name}' as select * from tbl")
 
     with st.container(border=True):
-        url = st.text_input("Get file from url")
+        url = st.text_input("Get File from URL")
         if st.button("Download file"):
-            response = requests.get(url)
-            if response.status_code == 200:
-                if "content-disposition" in response.headers.keys():
-                    file_name = re.findall(
-                        'filename="(.+)"', response.headers["content-disposition"]
-                    )[0]
+            try:
+                response = requests.get(url, timeout=30)
+                if response.status_code == 200:
+                    if "content-disposition" in response.headers.keys():
+                        file_name = re.findall(
+                            'filename="(.+)"', response.headers["content-disposition"]
+                        )[0]
+                    else:
+                        file_name = re.findall(
+                            "(\\w+)(\\.\\w+)+(?!.*(\\w+)(\\.\\w+)+)", url
+                        )[0][0]
+                    conn.sql(
+                        f"create table if not exists '{file_name}' as select * from '{url}'"
+                    )
                 else:
-                    file_name = re.findall("(\w+)(\.\w+)+(?!.*(\w+)(\.\w+)+)", url)[0][
-                        0
-                    ]
-                conn.sql(
-                    f"create or replace table '{file_name}' as select * from '{url}'"
-                )
+                    st.toast(f"Invalid URL {url}.")
+            except duckdb.CatalogException:
+                st.toast("Data not in correct format.")
+            except Exception as exception:
+                st.toast(exception)
 
     with st.container(border=True):
         cur.execute("show all tables")
         recs = cur.fetchall()
         table_lst = [rec[2] for rec in recs]
 
-        select_table = st.selectbox("Select Table", table_lst)
-
     with st.expander("About"):
-        st.markdown(
-            """
-            This application is a powerful tool for anyone who needs to perform
-            exploratory data analysis and manipulate data using SQL.\n
-            __Upload File__: The application allows users to upload files in specified format.
-            The uploaded data is then loaded into a pandas DataFrame for further processing.\n
-            __Select Table__: Users can select a table from the uploaded files for further operations.\n
-            __Visual Exploration__: Application provides a visual exploration interface using the pygwalker library.
-            This allows users to interactively explore their data.\n
-            __SQL Workbench__: The application provides an SQL workbench where users can write and execute
-            SQL queries on the selected table. The results of the queries are displayed in a DataFrame.\n
-            __Data Profiling__: The application generates a data profiling report using the ydata_profiling library.
-            This report provides comprehensive insights into the selected data.\n
-            """
-        )
+        st.markdown(about)
 
 if table_lst:
+    select_table = st.selectbox("Select Table", table_lst)
     df = conn.sql(f"from '{select_table}'").df()
     tab = st.tabs(["Visual Exploration", "SQL Workbench", "Data Profiling"])
+
     with tab[0]:
         pyg_app = get_streamlit_renderer(df)
         pyg_app.explorer(default_tab="data")
@@ -131,3 +140,5 @@ if table_lst:
     with tab[2]:
         pr = get_profile_report(df)
         st_profile_report(pr)
+else:
+    st.markdown(about)
