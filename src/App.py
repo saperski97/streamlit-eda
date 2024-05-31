@@ -5,8 +5,8 @@ from streamlit_ydata_profiling import st_profile_report
 from pygwalker.api.streamlit import StreamlitRenderer
 from streamlit_ace import st_ace
 import duckdb
-
-st.set_page_config(layout="wide")
+import requests
+import re
 
 
 @st.cache_resource
@@ -18,12 +18,19 @@ def get_profile_report(tbl):
 def get_streamlit_renderer(tbl):
     return StreamlitRenderer(tbl, dark="light")
 
+@st.cache_resource
+def get_db_connection():
+    conn = duckdb.connect()
+    conn.install_extension("spatial")
+    conn.load_extension("spatial")
+    return conn
 
-global tbl
-tbl = None
-tab = st.tabs(["Visual Exploration", "SQL Workbench", "Data Profiling"])
-duckdb.query("install spatial")
-duckdb.query("load spatial")
+
+st.set_page_config(page_title="streamlit-eda", page_icon=":bar_chart:",layout="wide")
+
+
+conn = get_db_connection()
+cur = conn.cursor()
 
 with st.sidebar:
     with st.container(border=True):
@@ -32,22 +39,33 @@ with st.sidebar:
             type={"csv", "txt", "xlsx", "parquet"},
             accept_multiple_files=True,
         )
+
         for file in files:
             if file.type == "application/octet-stream":
-                tbl = pd.read_parquet(file)
+                conn.read_parquet(file).to_table(file.name)
             elif file.type == "text/csv":
-                tbl = pd.read_csv(file)
+                conn.read_csv(file).to_table(file.name)
             elif (
                 file.type
                 == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             ):
-                tbl = pd.read_excel(file)
-            duckdb.query(f"create or replace table '{file.name}' as select * from tbl")
+                conn.sql(f"create or replace table '{file.name}' as select * from st_read('{file}')")
 
     with st.container(border=True):
-        select_table = st.selectbox("Select Table", [file.name for file in files])
-        if files:
-            tbl = duckdb.query(f"from '{select_table}'").df()
+        url = st.text_input("Get file from url")
+        if st.button("Download file"):
+            response = requests.get(url)
+            if response.status_code == 200:
+                file_name = re.findall("filename=\"(.+)\"", response.headers["content-disposition"])[0]
+                conn.sql(f"create or replace table '{file_name}' as select * from '{url}'")
+
+
+    with st.container(border=True):
+        cur.execute("show all tables")
+        recs = cur.fetchall()
+        table_lst = [rec[2] for rec in recs]
+            
+        select_table = st.selectbox("Select Table", table_lst)
 
     with st.expander("About"):
         st.markdown(
@@ -66,9 +84,11 @@ with st.sidebar:
             """
         )
 
-if files:
+if table_lst:
+    df = conn.sql(f"from '{select_table}'").df()
+    tab = st.tabs(["Visual Exploration", "SQL Workbench", "Data Profiling"])
     with tab[0]:
-        pyg_app = get_streamlit_renderer(tbl)
+        pyg_app = get_streamlit_renderer(df)
         pyg_app.explorer(default_tab="data")
 
     with tab[1]:
@@ -88,7 +108,7 @@ if files:
             if content:
                 try:
                     st.dataframe(
-                        duckdb.query(content).to_df(), use_container_width=True
+                        cur.execute(content).fetch_df(), use_container_width=True
                     )
                 except Exception as exception:
                     st.error(exception)
@@ -98,7 +118,5 @@ if files:
                 st.info("Execute non empty query")
 
     with tab[2]:
-        pr = get_profile_report(tbl)
+        pr = get_profile_report(df)
         st_profile_report(pr)
-else:
-    st.info("Upload a file")
