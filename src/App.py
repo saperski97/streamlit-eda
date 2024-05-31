@@ -16,7 +16,7 @@ def get_profile_report(tbl):
 
 @st.cache_resource
 def get_streamlit_renderer(tbl):
-    return StreamlitRenderer(tbl, dark="light")
+    return StreamlitRenderer(tbl, appearance="light")
 
 
 def get_db_connection():
