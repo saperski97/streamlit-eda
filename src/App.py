@@ -7,11 +7,12 @@ from streamlit_ace import st_ace
 import duckdb
 import requests
 import re
+from sqlalchemy import create_engine, exc
 
 
 @st.cache_resource
 def get_profile_report(tbl):
-    return ProfileReport(tbl, orange_mode=True, minimal=True, explorative=True)
+    return ProfileReport(tbl, orange_mode=True, explorative=True)
 
 
 @st.cache_resource
@@ -94,13 +95,60 @@ with st.sidebar:
             except Exception as exception:
                 st.toast(exception)
 
-    with st.container(border=True):
-        cur.execute("show all tables")
-        recs = cur.fetchall()
-        table_lst = [rec[2] for rec in recs]
+    with st.expander("Connect to Snowflake"):
+        account = (st.text_input("Account"),)
+        username = (st.text_input("Username"),)
+        password = (st.text_input("Password", type="password"),)
+        database = (st.text_input("Database"),)
+        schema = (st.text_input("Schema"),)
+        warehouse = (st.text_input("Warehouse"),)
+
+        if "clicked" not in st.session_state:
+            st.session_state.clicked = False
+
+        if (
+            st.button("Connect to database", use_container_width=True)
+            or st.session_state["clicked"]
+        ):
+            st.session_state["clicked"] = True
+            engine = create_engine(
+                f"snowflake://{username[0]}:{password[0]}@{account[0]}/{database[0]}/{schema[0]}?warehouse={warehouse[0]}"  # noqa: E501
+            )
+
+            try:
+                connection = engine.connect()
+                tbls = connection.execute("show tables").fetchall()
+
+                with st.popover("Select table to load", use_container_width=True):
+                    tbl = st.selectbox(
+                        "Select table to load", pd.DataFrame(tbls)["name"], index=None
+                    )
+                    limit = st.checkbox("Limit data to 10.000 rows")
+                    if st.button("Load data", use_container_width=True):
+                        if limit:
+                            data = connection.execute(
+                                f"select * from {tbl} limit 10000"
+                            ).fetchall()
+                        else:
+                            data = connection.execute(f"select * from {tbl}").fetchall()
+                        data_df = pd.DataFrame(data)
+                        conn.sql(
+                            f"create table if not exists '{tbl}' as select * from data_df"
+                        )
+                        st.toast("Data loaded.")
+            except Exception as exception:
+                st.toast(exception)
+            except exc.SQLAlchemyError as error:
+                st.toast(error)
+            finally:
+                engine.dispose()
 
     with st.expander("About"):
         st.markdown(about)
+
+cur.execute("show all tables")
+recs = cur.fetchall()
+table_lst = [rec[2] for rec in recs]
 
 if table_lst:
     select_table = st.selectbox("Select Table", table_lst)
